@@ -1,0 +1,710 @@
+1.	Finding the General Informations
+
+-	First Step
+// Define the file path
+val filePath = "/FileStore/assignment"
+
+// Read the content of the PHP file
+val phpFileRDD = sc.textFile(filePath)
+
+// Define the function to process each line
+def processLine(line: String): String = {
+  // Regular expression to match text outside <>
+  val regex = "([^<]*)<[^>]*>".r
+  // Extract all matches and concatenate them with space as separator
+  var attributes = regex.findAllMatchIn(line).map(_.group(1)).mkString("").trim
+
+  // Remove "echo" statements
+  attributes = attributes.replaceAll("echo", "")
+
+  // Remove attributes concatenated with "&"
+  attributes = attributes.replaceAll("&", "")
+
+  // Remove non-breaking space entities
+  attributes = attributes.replaceAll("nbsp;", "")
+
+  // Remove special characters except spaces
+  attributes.replaceAll("[^a-zA-Z0-9\\s]", "")
+}
+
+// Apply the function to each line in the RDD
+val processedLinesRDD = phpFileRDD.map(processLine)
+val filteredCleanedArray = processedLinesRDD
+  .filter(!_.contains("jQuery"))
+  .filter(!_.contains("while"))
+  .filter(!_.contains("opt"))
+  .filter(!_.contains("tools"))
+  .filter(!_.contains("print"))
+  .filter(!_.contains("alert"))
+  .filter(!_.contains("table"))
+  .filter(!_.contains("html"))
+  .filter(!_.contains("prevlaquokdatasettingsnif0atotalreturn "))
+  .filter(!_.contains("echo")) // Remove echo statements
+  .filter(!_.contains("&"))    // Remove attributes concatenated with "&"
+  .filter(!_.contains("nbsp;")) // Remove non-breaking space entities
+  .filter(!_.matches(".*\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b.*")) // Remove email addresses
+  .filter(!_.matches(".*\\b\\d{2,4}(-|\\/|\\.)\\d{1,2}\\1\\d{1,4}\\b.*")) // Remove dates
+val finalCleanedArray = filteredCleanedArray.filter(_.replaceAll("\\s", "").matches("\\p{Print}+")).distinct()
+
+// Print each processed line row by row
+finalCleanedArray.collect()
+
+-	Find Portal
+val portalInfoRDD = finalCleanedArray.filter { line =>
+  line.toLowerCase.contains("portal") || // Look for lines containing the word "portal"
+  line.toLowerCase.contains("about us") || // Look for lines containing "about us"
+  line.toLowerCase.contains("contact us") || // Look for lines containing "contact us"
+  line.toLowerCase.contains("help") || // Look for lines containing "help"
+  line.toLowerCase.contains("services") || // Look for lines containing "services"
+  line.toLowerCase.contains("benefits") || // Look for lines containing "benefits"
+  line.toLowerCase.contains("testimonials") // Look for lines containing "testimonials"
+}
+// Print each line containing portal information
+  portalInfoRDD.collect()
+
+-	Find Developer
+
+val developerInfoRDD = finalCleanedArray.filter { line =>
+  line.toLowerCase.contains("design") || // Look for lines containing the word "design"
+  line.toLowerCase.contains("idea")      // Look for lines containing the word "idea"
+}
+
+// Print each line containing portal information
+portalInfoRDD.collect()
+
+-	Find Appointment
+val appointmentInfoRDD = finalCleanedArray.filter { line =>
+  line.toLowerCase.contains("appointment")  // Look for lines containing the word "appointment"
+
+}
+val appointmentInfoRDDFinal = appintmentInfoRDD.filter(!_.contains("portal")) //filter out the portal information that already retrieve
+// Print each line containing portal information
+appointmentInfoRDDFinal.collect()
+
+-	Find Doctor Profession
+// Filter lines containing information about different professions
+val professionInfoRDD = finalCleanedArray.filter { line =>
+  line.toLowerCase.contains("denitst") ||       //find dentist
+  line.toLowerCase.contains("cardiologist") ||  //find cardiologist
+  line.toLowerCase.contains("allergist") ||   //find allergist
+  line.toLowerCase.contains("physcit") ||   //find physician
+  line.toLowerCase.contains("gynecologist")   //find gyneoclogist
+}
+
+// Print each line containing profession information
+professionInfoRDD.collect()
+
+
+
+
+
+
+2. Finding the Source code metrics
+-	Extracting the source code metrics: class, div, var, includes, and functions
+import org.apache.spark.sql.SparkSession
+// Read all .php files in the directory
+val filePath = "/FileStore/assignment"
+val filesRDD = spark.sparkContext.wholeTextFiles(filePath)
+
+// Count occurrences of specific words in .php files
+val specificWordsCount = filesRDD.flatMap { case (_, content) =>
+  // Split content into words and filter specific words
+  val words = content.toLowerCase.split("\\W+")
+  words.filter(word => Set("class", "div", "var", "includes", "function").contains(word))
+}.map(word => (word, 1)).reduceByKey(_ + _)
+
+// Print the count of specific words
+specificWordsCount.collect().foreach { case (word, count) =>
+  println(s"Occurrences of '$word': $count")
+}
+
+
+-	Extracting the LOC, and number of files in the source code dataset.
+// Load .js and .php files from the specified directory
+val filesRDD = spark.sparkContext.wholeTextFiles("/FileStore/assignment/*.{js,php}")
+
+// Calculate total lines of code (LOC) and number of files for JavaScript files
+val (jsTotalLOC, jsNumFiles) = (filesRDD.filter { case (path, _) => path.endsWith(".js") }
+                                    .map { case (_, content) => content.split("\n").length }
+                                    .sum(),
+                                 filesRDD.filter { case (path, _) => path.endsWith(".js") }.count())
+
+// Calculate total lines of code (LOC) and number of files for PHP files
+val (phpTotalLOC, phpNumFiles) = (filesRDD.filter { case (path, _) => path.endsWith(".php") }
+                                     .map { case (_, content) => content.split("\n").length }
+                                     .sum(),
+                                  filesRDD.filter { case (path, _) => path.endsWith(".php") }.count())
+
+// Combine the results
+val totalLOC = jsTotalLOC + phpTotalLOC
+val totalNumFiles = jsNumFiles + phpNumFiles
+
+// Output combined results
+println("Combined Metrics:")
+println(s"Total Lines of Code: $totalLOC")
+println(s"Total Number of Files: $totalNumFiles")
+
+
+
+
+
+
+
+3. Finding the Components and Subcomponents
+-	Extracted Class code
+// Define the file path and load the RDD
+val filePaths = "/FileStore/assignment"
+val combinedRDD = sc.textFile(filePaths)
+
+// Define a regex pattern to extract class attributes within double quotes
+val classPattern = """class="([^"]*)"""".r
+
+// Filter lines containing "class" attributes and extract them
+val extractedClasses = combinedRDD
+  .flatMap { line =>
+    classPattern.findAllMatchIn(line).flatMap { matchResult =>
+      val classAttributeValue = matchResult.group(1).trim
+      if (!classAttributeValue.contains("'")) {
+        val classes = classAttributeValue.split("\\s+").filter(_.nonEmpty)
+        classes.map(classAttr => (classAttr, 1))
+      } else {
+        Iterator.empty
+      }
+    }
+  }
+  .reduceByKey(_ + _) // Reduce by key to aggregate counts for each class attribute
+
+// Collect the results and sort the extracted class attributes by count in descending order
+val sortedClassCounts = extractedClasses
+  .map { case (classAttr, count) => (count, classAttr) } // Swap (classAttr, count) to (count, classAttr) for sorting
+  .sortByKey(false) // Sort by count in descending order
+  .collect()
+
+// Print the class attributes sorted by count in descending order
+sortedClassCounts.foreach { case (count, classAttr) =>
+  println(s"Class attribute '$classAttr' occurred $count times")
+}
+
+// Calculate the sum of counts for all class attributes
+val totalCountClassAttributes = sortedClassCounts.foldLeft(0)((sum, tuple) => sum + tuple._1)
+println(s"\nTotal count of extracted class attributes: $totalCountClassAttributes")
+
+
+-	Extracted Div code
+// Define the file path and load the RDD
+val filePaths = "/FileStore/assignment"
+val combinedRDD = sc.textFile(filePaths)
+
+// Filter lines containing "div", extract div names, and count occurrences
+val extractedDivs = combinedRDD
+  .filter(_.contains("div")) // Filter lines containing "div"
+  .flatMap { line =>
+    val words = line.split(" ")
+    if (words.nonEmpty) {
+      // Remove special characters from the last word
+      val lastWord = words.last.replaceAll("[\\$<>?;&\\[\\]/()''.]", "")
+      Some(lastWord)
+    } else {
+      None
+    }
+  }
+  .flatMap(_.split("\\s+")) // Split by whitespace
+  .filter(_.startsWith("div")) // Filter tokens starting with "div"
+  .map(_.replaceAll("[\",]", "")) // Extract and clean div names
+  .map((_, 1)) // Map each div name to (divName, 1) for counting
+  .reduceByKey(_ + _) // Count occurrences of each div name
+
+// Collect the results and sort the grouped div counts by count in descending order
+val sortedDivCounts = extractedDivs
+  .map { case (divName, count) => (count, divName) } // Swap (divName, count) to (count, divName) for sorting
+  .sortByKey(false) // Sort by count in descending order
+  .collect()
+
+// Print the div counts sorted by count in descending order
+sortedDivCounts.foreach { case (count, divName) =>
+  println(s"Div '$divName' occurred $count times")
+}
+
+// Print the count of 'div' occurrences after filtering
+val divOccurrencesCount = extractedDivs.count()
+println(s"Number of occurrences of 'div' after filtering: $divOccurrencesCount")
+
+// Sum up the counts of all div occurrences
+val totalDivCount = extractedDivs.map(_._2).reduce(_ + _)
+println(s"Total count of div occurrences: $totalDivCount")
+
+
+-	Extracted attributes code
+// Define the file path and load the RDD
+val filePaths = "/FileStore/assignment"
+val combinedRDD = sc.textFile(filePaths)
+
+// Function to extract PHP variables and their attributes from a line of PHP code
+def extractVariableAttributes(line: String): Seq[String] = {
+  // Regular expression to match PHP variable assignments starting with $
+  val variableRegex = """\$(\w+)\s*=\s*\$?([a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff\[\]'"]*)""".r
+  // Find all matches of variable assignments in the line
+  variableRegex.findAllMatchIn(line)
+    .flatMap { matchResult =>
+      // Extract the attribute value from the match
+      if (matchResult.groupCount >= 2) {
+        Some(matchResult.group(1)) // Return the variable name with $
+      } else {
+        None
+      }
+    }
+    .toList
+}
+
+// Extract variable attributes from each line of text and flatten the result
+val attributeRDD = combinedRDD
+  .flatMap(extractVariableAttributes) // Extract variable attributes
+
+// Count occurrences of each attribute
+val attributeCountsRDD = attributeRDD
+  .map(attribute => (attribute, 1)) // Map each attribute to (attribute, count)
+  .reduceByKey(_ + _) // Reduce by key to count occurrences
+
+// Collect the result as a list of (attribute, count) tuples and sort by count in descending order
+val attributeCounts = attributeCountsRDD
+  .map { case (attribute, count) => (count, attribute) } // Swap (attribute, count) to (count, attribute) for sorting
+  .sortByKey(false) // Sort by count in descending order
+  .collect()
+
+// Print the result with modified attribute formatting and sorted by count
+attributeCounts.foreach { case (count, attribute) =>
+  println(s"Attribute inside php: $$${attribute}, Count: $count")
+}
+
+// Calculate the sum of attribute counts
+val totalAttributeCount = attributeCountsRDD.map(_._2).reduce(_ + _)
+println(s"Total count of extracted attributes: $totalAttributeCount")
+
+
+-	Extracted function() code
+import org.apache.spark.rdd.RDD
+
+// Define the file path and load the RDD
+val filePaths = "/FileStore/assignment"
+val combinedRDD = sc.textFile(filePaths)
+
+// Define a regular expression pattern to match functions with options inside parentheses
+val functionWithOptionsPattern = """function\s*\((.*?)\)""".r
+
+// Filter lines containing the desired function pattern and extract functions with options
+val extractedFunctions = combinedRDD
+  .flatMap { line =>
+    // Find all matches of the function pattern within the line
+    functionWithOptionsPattern.findAllMatchIn(line).map { matchResult =>
+      // Extract the options inside the parentheses
+      val options = matchResult.group(1).trim
+      options
+    }
+  }
+
+// Count occurrences of each function with options
+val functionCounts = extractedFunctions
+  .map(options => (options, 1)) // Map each function option to (options, 1) for counting
+  .reduceByKey(_ + _) // Reduce by key to aggregate counts
+
+// Sort the function counts by count in descending order
+val sortedFunctionCounts = functionCounts
+  .map { case (options, count) => (count, options) } // Swap (options, count) to (count, options) for sorting
+  .sortByKey(false) // Sort by count in descending order
+  .persist() // Cache the sorted counts for efficient reuse
+
+// Collect the sorted results as an array
+val sortedFunctions = sortedFunctionCounts.collect()
+
+// Print the count of each function with options in descending order
+println("Functions with options (sorted by count in descending order):")
+sortedFunctions.foreach { case (count, options) =>
+  println(s"Function($options), Count: $count")
+}
+
+// Calculate the sum of all function counts
+val totalCountFunctions = sortedFunctionCounts.map(_._1).sum()
+println(s"\nTotal count of functions with options: $totalCountFunctions")
+
+
+-	Extracted for loop code
+// Define the file path and load the RDD
+val filePaths = "/FileStore/assignment"
+val combinedRDD = sc.textFile(filePaths)
+
+// Define regular expression pattern to match `for` loop constructs
+val forPattern = """\bfor\s*\((.*?)\)""".r
+
+// Filter lines containing `for` loop constructs and extract them with conditions/attributes
+val extractedForLoops = combinedRDD
+  .flatMap { line =>
+    forPattern.findAllMatchIn(line).map(_.group(1))
+  }
+
+// Count occurrences of each `for` loop construct with conditions/attributes
+val forLoopCounts = extractedForLoops
+  .map(content => (s"for($content)", 1))
+  .reduceByKey(_ + _)
+
+// Sort the `for` loop counts by count in descending order
+val sortedForLoopCounts = forLoopCounts
+  .map { case (info, count) => (count, info) }
+  .sortByKey(false)
+
+// Collect and print the sorted results
+val sortedForLoops = sortedForLoopCounts.collect()
+println("For Loop Constructs with Conditions (sorted by count in descending order):")
+sortedForLoops.foreach { case (count, info) =>
+  println(s"$info occurred $count times")
+}
+
+// Calculate the sum of counts for `for` loop constructs
+val totalCountForLoops = sortedForLoopCounts.map(_._1).sum()
+println(s"\nTotal count of 'for' loop constructs: $totalCountForLoops")
+
+
+-	Extracted switch code
+// Define regular expression pattern to match `switch` statement constructs
+val switchPattern = """\bswitch\s*\((.*?)\)""".r
+
+// Filter lines containing `switch` statement constructs and extract them with conditions/attributes
+val extractedSwitchStatements = combinedRDD
+  .flatMap { line =>
+    switchPattern.findAllMatchIn(line).map(_.group(1))
+  }
+
+// Count occurrences of each `switch` statement construct with conditions/attributes
+val switchStatementCounts = extractedSwitchStatements
+  .map(content => (s"switch($content)", 1))
+  .reduceByKey(_ + _)
+
+// Sort the `switch` statement counts by count in descending order
+val sortedSwitchStatementCounts = switchStatementCounts
+  .map { case (info, count) => (count, info) }
+  .sortByKey(false)
+
+// Collect and print the sorted results
+val sortedSwitchStatements = sortedSwitchStatementCounts.collect()
+println("Switch Statement Constructs with Conditions (sorted by count in descending order):")
+sortedSwitchStatements.foreach { case (count, info) =>
+  println(s"$info occurred $count times")
+}
+
+// Calculate the sum of counts for `switch` constructs
+val totalCountForswitch = sortedSwitchStatementCounts.map(_._1).sum()
+println(s"\nTotal count of 'switch' constructs: $sortedSwitchStatementCounts")
+
+
+-	Extracted case code
+// Define regular expression pattern to match `case` clauses
+val casePattern = """\bcase\s+['"]?(.*?)['"]?\s*:""".r
+
+// Filter lines containing `case` clauses and extract them with conditions/attributes
+val extractedCaseClauses = combinedRDD
+  .flatMap { line =>
+    casePattern.findAllMatchIn(line).map(_.group(1))
+  }
+
+// Count occurrences of each `case` clause with conditions/attributes
+val caseClauseCounts = extractedCaseClauses
+  .map(content => (s"case: $content", 1))
+  .reduceByKey(_ + _)
+
+// Sort the `case` clause counts by count in descending order
+val sortedCaseClauseCounts = caseClauseCounts
+  .map { case (info, count) => (count, info) }
+  .sortByKey(false)
+
+// Collect and print the sorted results
+val sortedCaseClauses = sortedCaseClauseCounts.collect()
+println("Case Clauses with Conditions (sorted by count in descending order):")
+sortedCaseClauses.foreach { case (count, info) =>
+  println(s"$info occurred $count times")
+}
+
+// Calculate the sum of counts for `case` constructs
+val totalCountForcase = sortedCaseClauseCounts.map(_._1).sum()
+println(s"\nTotal count of 'case' constructs: $sortedCaseClauseCounts")
+
+
+-	Extracted if condition code
+// Define regular expression pattern to match `if` statement constructs
+val ifPattern = """\bif\s*\((.*?)\)""".r
+
+// Filter lines containing `if` statement constructs and extract them with conditions/attributes
+val extractedIfStatements = combinedRDD
+  .flatMap { line =>
+    ifPattern.findAllMatchIn(line).map(_.group(1))
+  }
+
+// Count occurrences of each `if` statement construct with conditions/attributes
+val ifStatementCounts = extractedIfStatements
+  .map(content => (s"if($content)", 1))
+  .reduceByKey(_ + _)
+
+// Sort the `if` statement counts by count in descending order
+val sortedIfStatementCounts = ifStatementCounts
+  .map { case (info, count) => (count, info) }
+  .sortByKey(false)
+
+// Collect and print the sorted results
+val sortedIfStatements = sortedIfStatementCounts.collect()
+println("If Statement Constructs with Conditions (sorted by count in descending order):")
+sortedIfStatements.foreach { case (count, info) =>
+  println(s"$info occurred $count times")
+}
+
+// Calculate the sum of counts for `if` constructs
+val totalCountForIf = sortedIfStatementCounts.map(_._1).sum()
+println(s"\nTotal count of 'if' constructs: $sortedIfStatementCounts")
+
+
+
+Extracted else condition code
+// Define regular expression pattern to match `else` statement constructs
+val elsePattern = """\belse\b""".r
+
+// Filter lines containing `else` statement constructs
+val extractedElseStatements = combinedRDD
+  .filter(line => elsePattern.findFirstIn(line).isDefined)
+  .map(_ => ("else", 1))
+
+// Count occurrences of `else` statement constructs
+val elseStatementCounts = extractedElseStatements
+  .reduceByKey(_ + _)
+
+// Collect and print the results
+val sortedElseStatements = elseStatementCounts.collect()
+println("Else Statement Constructs (sorted by count in descending order):")
+sortedElseStatements.foreach { case (info, count) =>
+  println(s"$info occurred $count times")
+}
+
+
+-	Extracted while loop code
+// Define regular expression pattern to match `while` loop constructs
+val whilePattern = """\bwhile\s*\((.*?)\)""".r
+
+// Filter lines containing `while` loop constructs and extract them with conditions/attributes
+val extractedWhileLoops = combinedRDD
+  .flatMap { line =>
+    whilePattern.findAllMatchIn(line).map(_.group(1))
+  }
+
+// Count occurrences of each `while` loop construct with conditions/attributes
+val whileLoopCounts = extractedWhileLoops
+  .map(content => (s"while($content)", 1))
+  .reduceByKey(_ + _)
+
+// Sort the `while` loop counts by count in descending order
+val sortedWhileLoopCounts = whileLoopCounts
+  .map { case (info, count) => (count, info) }
+  .sortByKey(false)
+
+// Collect and print the sorted results
+val sortedWhileLoops = sortedWhileLoopCounts.collect()
+println("While Loop Constructs with Conditions (sorted by count in descending order):")
+sortedWhileLoops.foreach { case (count, info) =>
+  println(s"$info occurred $count times")
+}
+
+// Calculate the sum of counts for `while` loop constructs
+val totalCountForWhile = sortedWhileLoopCounts.map(_._1).sum()
+println(s"\nTotal count of 'while' loop constructs: $sortedWhileLoopCounts")
+
+
+
+-	Table of extracted code and count
+val totalCountForLoops = sortedForLoopCounts.map(_._1).sum
+val totalCountForswitch = sortedSwitchStatementCounts.map(_._1).sum
+val totalCountForcase = sortedCaseClauseCounts.map(_._1).sum
+// Calculate the total count for `if` constructs
+val totalCountForIf = sortedIfStatements.map(_._1).sum
+
+// Calculate the total count for `else` constructs
+val totalCountForElse = sortedElseStatements.map(_._2).sum
+val totalCountForWhile = sortedWhileLoopCounts.map(_._1).sum
+
+val totalCountClassAttributes = sortedClassCounts.foldLeft(0)((sum, tuple) => sum + tuple._1)
+val totalCountFunctions = sortedFunctionCounts.map(_._1).sum
+val totalDivCount = extractedDivs.map(_._2).reduce(_ + _)
+val totalAttributeCount = attributeCountsRDD.map(_._2).reduce(_ + _)
+
+// Create an HTML table
+val htmlTable = s"""
+  |<input type="text" id="keywordInput" placeholder="Search for a keyword..">
+  |<button id="searchButton">Search</button>
+  |<script defer>
+  |function searchKeyword() {
+  |  var input, filter, table, tr, td, i, txtValue;
+  |  input = document.getElementById("keywordInput");
+  |  filter = input.value.toUpperCase();
+  |  table = document.getElementById("dataTable");
+  |
+  |  // Check if the table exists
+  |  if (table) {
+  |    tr = table.getElementsByTagName("tr");
+  |    for (i = 0; i < tr.length; i++) {
+  |      td = tr[i].getElementsByTagName("td")[0];
+  |      if (td) {
+  |        txtValue = td.textContent || td.innerText;
+  |        if (txtValue.toUpperCase().indexOf(filter) > -1) {
+  |          tr[i].style.display = "";
+  |        } else {
+  |          tr[i].style.display = "none";
+  |        }
+  |      }
+  |    }
+  |  }
+  |}
+  |
+  |function searchButtonClick() {
+  |  searchKeyword();
+  |  var filteredData = [];
+  |  var table = document.getElementById("dataTable");
+  |  var rows = table.getElementsByTagName("tr");
+  |  for (var i = 0; i < rows.length; i++) {
+  |    var cells = rows[i].getElementsByTagName("td");
+  |    var rowData = [];
+  |    for (var j = 0; j < cells.length; j++) {
+  |      rowData.push(cells[j].innerText);
+  |    }
+  |    filteredData.push(rowData);
+  |  }
+  |  fetch('/submitFilteredData', {
+  |    method: 'POST',
+  |    body: JSON.stringify(filteredData),
+  |    headers: {
+  |      'Content-Type': 'application/json'
+  |    }
+  |  });
+  |}
+  |
+  |document.getElementById("searchButton").addEventListener("click", searchButtonClick);
+  |</script>
+  |<table border='1' id="dataTable">
+  |  <tr>
+  |    <th>Statement Type</th>
+  |    <th>Total Count</th>
+  |    <th>Code Link</th>
+  |  </tr>
+  |  <tr>
+  |    <td>For loop</td>
+  |    <td>$totalCountForLoops</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>Switch</td>
+  |    <td>$totalCountForswitch</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>Case</td>
+  |    <td>$totalCountForcase</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>if</td>
+  |    <td>$totalCountForIf</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>else</td>
+  |    <td>$totalCountForElse</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>While loop</td>
+  |    <td>$totalCountForWhile</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>Class</td>
+  |    <td>$totalCountClassAttributes</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>Function()</td>
+  |    <td>$totalCountFunctions</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>Div</td>
+  |    <td>$totalDivCount</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |  <tr>
+  |    <td>Attribute</td>
+  |    <td>$totalAttributeCount</td>
+  |    <td><a href='#code_link'>Link to Code</a></td>
+  |  </tr>
+  |</table>
+""".stripMargin
+
+displayHTML(htmlTable)
+
+
+
+
+
+
+
+
+
+
+4. Finding the relationships between modules, classes, functions and data dependencies.
+
+-	Scala code
+import scala.io.Source
+import java.io.PrintWriter
+
+val filePaths = "C:\\Users\\user\\newdoctorpatientportal-master"
+val fileContents = Source.fromFile(filePaths).getLines().toList
+
+// Function to extract dependencies from different components
+def extractDependenciesFromLine(line: String): List[String] = {
+  val modulePattern = """module\s+(\w+)""".r
+  val classPattern = """class\s+(\w+)""".r
+  val functionPattern = """def\s+(\w+)""".r
+  val dataPattern = """val\s+(\w+)""".r
+ 
+  val moduleDependencies = modulePattern.findAllIn(line).toList
+  val classDependencies = classPattern.findAllIn(line).toList
+  val functionDependencies = functionPattern.findAllIn(line).toList
+  val dataDependencies = dataPattern.findAllIn(line).toList
+ 
+  moduleDependencies ++ classDependencies ++ functionDependencies ++ dataDependencies
+}
+
+// Function to extract dependencies from a function options string
+def extractDependenciesFromOptions(options: String): List[String] = {
+  options.split("\\s*,\\s*").toList
+}
+
+// Extract and process dependencies from input
+println("Enter the code:")
+val userInput = scala.io.StdIn.readLine()
+val dependencies = extractDependenciesFromLine(userInput)
+
+
+
+// Construct dependency edges in DOT format
+ val dependencyEdges = dependencies.filter(_.nonEmpty).map( case (userInput, targets)=> s"""  "$userInput" -> "$target";""")
+
+// Generate the complete DOT representation
+val dotContent =
+  s"""|digraph G {
+      |${dependencyEdges.mkString("\n")}
+      |}
+      |""".stripMargin
+
+println(dotContent)
+
+// Define the file path where you want to save the .dot file
+val filePath = "C:\\output.dot"
+
+val writer = new PrintWriter(filePath)
+writer.write(dotContent)
+writer.close()
+
+
